@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:scroll_to_index/scroll_to_index.dart';
 
 import 'components/cross_calendar_alert.dart';
-import 'parts/diagonal_slash_painter.dart';
 import 'utility/functions.dart';
 
 ///
