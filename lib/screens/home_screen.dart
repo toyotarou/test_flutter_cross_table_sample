@@ -51,10 +51,9 @@ class HomeScreen extends StatelessWidget {
             ),
 
             Expanded(
-              child: CrossCalendarAlert(
+              child: CrossCalendar(
                 years: years,
                 monthDays: monthDays,
-                data: data,
                 headerHeight: rowHeights[0],
                 leftColWidth: colWidths[0],
                 rowHeights: rowHeights,

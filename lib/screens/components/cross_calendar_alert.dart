@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:scroll_to_index/scroll_to_index.dart';
 
+import '../../extensions/extensions.dart';
 import '../parts/diagonal_slash_painter.dart';
 
-class CrossCalendarAlert extends StatefulWidget {
-  const CrossCalendarAlert({
+class CrossCalendar extends ConsumerStatefulWidget {
+  const CrossCalendar({
     super.key,
     required this.years,
     required this.monthDays,
-    required this.data,
     required this.headerHeight,
     required this.leftColWidth,
     required this.rowHeights,
@@ -17,23 +18,24 @@ class CrossCalendarAlert extends StatefulWidget {
        assert(colWidths.length == monthDays.length + 1);
 
   final List<String> years;
-  final List<String> monthDays; // "MM-dd"
-  final Map<String, Map<String, String>> data;
+  final List<String> monthDays;
+
   final double headerHeight;
   final double leftColWidth;
   final List<double> rowHeights;
   final List<double> colWidths;
 
   @override
-  State<CrossCalendarAlert> createState() => _CrossCalendarAlertState();
+  ConsumerState<CrossCalendar> createState() => _CrossCalendarState();
 }
 
-class _CrossCalendarAlertState extends State<CrossCalendarAlert> {
+class _CrossCalendarState extends ConsumerState<CrossCalendar> {
   late final AutoScrollController _hHeaderCtrl;
   late final AutoScrollController _hBodyCtrl;
   final ScrollController _vLeftCtrl = ScrollController();
   final ScrollController _vBodyCtrl = ScrollController();
   final ScrollController _monthBarCtrl = ScrollController();
+
   final List<GlobalKey> _monthKeys = List<GlobalKey>.generate(12, (_) => GlobalKey());
   late final List<GlobalKey> _yearKeys;
 
@@ -42,33 +44,51 @@ class _CrossCalendarAlertState extends State<CrossCalendarAlert> {
   int _currentMonth = 1;
 
   late final Map<int, int> _monthStartIndex;
+
   late final Map<String, int> _dayIndex;
+
   late final List<double> _prefixWidths;
 
-  double get _bodyTotalHeight => widget.rowHeights.sublist(1).reduce((double a, double b) => a + b);
+  final Map<String, String> _weekdayCache = <String, String>{};
 
+  final Map<String, Color> _lifetimeColorCache = <String, Color>{};
+
+  final Map<String, bool> _holidayCache = <String, bool>{};
+
+  static const TextStyle _text12 = TextStyle(fontSize: 12);
+  static const TextStyle _text12Bold = TextStyle(fontSize: 12, fontWeight: FontWeight.bold);
+  static const EdgeInsets _cellPadding = EdgeInsets.symmetric(horizontal: 8, vertical: 6);
+
+  ///
+  double get _bodyTotalHeight => widget.rowHeights
+      .asMap()
+      .entries
+      .where((MapEntry<int, double> e) => e.key > 0)
+      .fold<double>(0, (double sum, MapEntry<int, double> e) => sum + e.value);
+
+  ///
   @override
   void initState() {
     super.initState();
+
     _hHeaderCtrl = AutoScrollController(axis: Axis.horizontal);
     _hBodyCtrl = AutoScrollController(axis: Axis.horizontal);
 
     final DateTime now = DateTime.now();
     _currentMonth = now.month;
-    // ignore: always_specify_types
-    _yearKeys = List.generate(widget.years.length, (_) => GlobalKey());
+    _yearKeys = List<GlobalKey>.generate(widget.years.length, (_) => GlobalKey());
 
     _monthStartIndex = <int, int>{
       for (int m = 1; m <= 12; m++)
         m: widget.monthDays.indexWhere((String md) => md.startsWith('${m.toString().padLeft(2, '0')}-')),
     };
     _dayIndex = <String, int>{for (int i = 0; i < widget.monthDays.length; i++) widget.monthDays[i]: i};
+
     _prefixWidths = List<double>.filled(widget.monthDays.length + 1, 0);
     for (int i = 1; i <= widget.monthDays.length; i++) {
       _prefixWidths[i] = _prefixWidths[i - 1] + widget.colWidths[i];
     }
 
-    // 横同期
     _hHeaderCtrl.addListener(() {
       if (_syncingH) {
         return;
@@ -92,7 +112,6 @@ class _CrossCalendarAlertState extends State<CrossCalendarAlert> {
       _updateCurrentMonthByOffset(_hBodyCtrl.offset);
     });
 
-    // 縦同期
     _vLeftCtrl.addListener(() {
       if (_syncingV) {
         return;
@@ -119,8 +138,7 @@ class _CrossCalendarAlertState extends State<CrossCalendarAlert> {
     });
   }
 
-  // ===== 基本機能 =====
-
+  ///
   void _updateCurrentMonthByOffset(double dx) {
     int lo = 0, hi = widget.monthDays.length;
     while (lo < hi) {
@@ -140,6 +158,7 @@ class _CrossCalendarAlertState extends State<CrossCalendarAlert> {
     }
   }
 
+  ///
   Future<void> _scrollToMonth(int month) async {
     final int idx = _monthStartIndex[month] ?? 0;
     _syncingH = true;
@@ -163,6 +182,7 @@ class _CrossCalendarAlertState extends State<CrossCalendarAlert> {
     _ensureMonthButtonVisible(month);
   }
 
+  ///
   Future<void> _scrollToTodayDay({bool fromInit = false}) async {
     final DateTime now = DateTime.now();
     final String md = '${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
@@ -194,6 +214,7 @@ class _CrossCalendarAlertState extends State<CrossCalendarAlert> {
     _ensureYearVisible(_closestYearTo(now.year), animate: !fromInit);
   }
 
+  ///
   void _ensureMonthButtonVisible(int month, {double alignment = 0.5, bool animate = true}) {
     final int i = (month - 1).clamp(0, 11);
     final BuildContext? ctx = _monthKeys[i].currentContext;
@@ -208,6 +229,7 @@ class _CrossCalendarAlertState extends State<CrossCalendarAlert> {
     );
   }
 
+  ///
   void _ensureYearVisible(int year, {double alignment = 0.5, bool animate = true}) {
     final int idx = widget.years.indexOf(year.toString());
     if (idx < 0 || idx >= _yearKeys.length) {
@@ -225,6 +247,7 @@ class _CrossCalendarAlertState extends State<CrossCalendarAlert> {
     );
   }
 
+  ///
   int _closestYearTo(int y) {
     final int idx = widget.years.indexOf(y.toString());
     if (idx >= 0) {
@@ -242,8 +265,37 @@ class _CrossCalendarAlertState extends State<CrossCalendarAlert> {
     return best;
   }
 
-  // ===== 表示構成 =====
+  ///
+  String _weekdayOf(String y, String md) {
+    final String key = '$y-$md';
+    final String? cached = _weekdayCache[key];
+    if (cached != null) {
+      return cached;
+    }
 
+    final int yy = int.parse(y);
+    final int mm = int.parse(md.substring(0, 2));
+    final int dd = int.parse(md.substring(3, 5));
+
+    final String val = DateTime(yy, mm, dd).youbiStr;
+
+    _weekdayCache[key] = val;
+    return val;
+  }
+
+  ///
+  bool _isHoliday(String date, String youbi) {
+    final bool? c = _holidayCache[date];
+    if (c != null) {
+      return c;
+    }
+
+    final bool v = youbi == 'Saturday' || youbi == 'Sunday';
+    _holidayCache[date] = v;
+    return v;
+  }
+
+  ///
   @override
   void dispose() {
     _hHeaderCtrl.dispose();
@@ -254,94 +306,39 @@ class _CrossCalendarAlertState extends State<CrossCalendarAlert> {
     super.dispose();
   }
 
+  ///
   @override
   Widget build(BuildContext context) {
     final double headerH = widget.headerHeight;
     final double leftW = widget.leftColWidth;
 
-    final DateTime now = DateTime.now();
+    final double lifetimeTileW = MediaQuery.of(context).size.width / 30;
 
     return Column(
       children: <Widget>[
-        // 上部の月ボタンバー
-        SizedBox(
-          height: 64,
-          child: Row(
-            children: <Widget>[
-              Expanded(
-                child: ListView.separated(
-                  controller: _monthBarCtrl,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  scrollDirection: Axis.horizontal,
-                  itemCount: 12,
-                  itemBuilder: (BuildContext context, int i) {
-                    final int month = i + 1;
-                    final bool selected = month == _currentMonth;
-                    return Container(
-                      key: _monthKeys[i],
-                      child: GestureDetector(
-                        onTap: () => _scrollToMonth(month),
-                        child: CircleAvatar(
-                          radius: 22,
-                          backgroundColor: selected ? Colors.blue : Colors.grey.shade300,
-                          foregroundColor: selected ? Colors.white : Colors.black87,
-                          child: Text('$month月'),
-                        ),
-                      ),
-                    );
-                  },
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Padding(
-                padding: const EdgeInsets.only(right: 12),
-                child: Wrap(
-                  spacing: 8,
-                  children: <Widget>[
-                    OutlinedButton.icon(
-                      onPressed: () => _scrollToMonth(now.month),
-                      icon: const Icon(Icons.calendar_month, size: 18),
-                      label: const Text('今月'),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: () => _scrollToTodayDay(),
-                      icon: const Icon(Icons.today, size: 18),
-                      label: const Text('今日'),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
+        getMonthSelectButton(),
         const Divider(height: 1),
 
-        // テーブル本体
         Expanded(
           child: Stack(
             children: <Widget>[
-              // 左上固定セル
               Positioned(
                 left: 0,
                 top: 0,
                 width: leftW,
                 height: headerH,
-                child: const DecoratedBox(
+                child: DecoratedBox(
                   decoration: BoxDecoration(
-                    color: Color(0xFFF5F5F7),
+                    color: Colors.black.withValues(alpha: 0.2),
                     border: Border(
-                      bottom: BorderSide(color: Color(0xFFE0E0E0)),
-                      right: BorderSide(color: Color(0xFFE0E0E0)),
+                      bottom: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
+                      right: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
                     ),
                   ),
-                  child: Center(
-                    child: Text(r'Year \ Date', style: TextStyle(fontWeight: FontWeight.bold)),
-                  ),
+                  child: const Center(child: Text(r'Year \ Date', style: _text12Bold)),
                 ),
               ),
 
-              // 上部ヘッダー
               Positioned(
                 left: leftW,
                 right: 0,
@@ -351,17 +348,20 @@ class _CrossCalendarAlertState extends State<CrossCalendarAlert> {
                   controller: _hHeaderCtrl,
                   scrollDirection: Axis.horizontal,
                   itemCount: widget.monthDays.length,
+                  cacheExtent: 400,
+
+                  addAutomaticKeepAlives: false,
+                  addSemanticIndexes: false,
                   itemBuilder: (_, int idx) => AutoScrollTag(
                     // ignore: always_specify_types
                     key: ValueKey('hheader_$idx'),
                     controller: _hHeaderCtrl,
                     index: idx,
-                    child: _headerCell(width: widget.colWidths[idx + 1], md: widget.monthDays[idx]),
+                    child: getHeaderCellContent(width: widget.colWidths[idx + 1], md: widget.monthDays[idx]),
                   ),
                 ),
               ),
 
-              // 左の年列
               Positioned(
                 left: 0,
                 top: headerH,
@@ -373,28 +373,26 @@ class _CrossCalendarAlertState extends State<CrossCalendarAlert> {
                   child: ListView.builder(
                     controller: _vLeftCtrl,
                     itemCount: widget.years.length,
+                    addAutomaticKeepAlives: false,
+                    addSemanticIndexes: false,
                     itemBuilder: (BuildContext context, int i) {
                       final String year = widget.years[i];
-                      return Container(
+                      return SizedBox(
                         key: _yearKeys[i],
                         height: widget.rowHeights[i + 1],
-                        decoration: const BoxDecoration(
-                          color: Color(0xFFF8F8FA),
-                          border: Border(
-                            bottom: BorderSide(color: Color(0xFFEAEAEA)),
-                            right: BorderSide(color: Color(0xFFE0E0E0)),
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.2),
+                            border: Border(bottom: BorderSide(color: Colors.white.withValues(alpha: 0.2))),
                           ),
+                          child: Center(child: Text(year, style: _text12Bold)),
                         ),
-                        alignment: Alignment.centerLeft,
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        child: Text(year, style: const TextStyle(fontWeight: FontWeight.bold)),
                       );
                     },
                   ),
                 ),
               ),
 
-              // 本体（横×縦）
               Positioned(
                 left: leftW,
                 top: headerH,
@@ -405,20 +403,27 @@ class _CrossCalendarAlertState extends State<CrossCalendarAlert> {
                   thumbVisibility: true,
                   child: SingleChildScrollView(
                     controller: _vBodyCtrl,
+
                     child: SizedBox(
                       height: _bodyTotalHeight,
                       child: ListView.builder(
                         controller: _hBodyCtrl,
                         scrollDirection: Axis.horizontal,
                         itemCount: widget.monthDays.length,
+                        cacheExtent: 400,
+                        addAutomaticKeepAlives: false,
+                        addSemanticIndexes: false,
                         itemBuilder: (_, int colIdx) => AutoScrollTag(
                           // ignore: always_specify_types
                           key: ValueKey('hbody_$colIdx'),
                           controller: _hBodyCtrl,
                           index: colIdx,
-                          child: _buildColumnOfYear(
-                            md: widget.monthDays[colIdx],
-                            colWidth: widget.colWidths[colIdx + 1],
+                          child: RepaintBoundary(
+                            child: _buildColumnOfYear(
+                              md: widget.monthDays[colIdx],
+                              colWidth: widget.colWidths[colIdx + 1],
+                              lifetimeTileW: lifetimeTileW,
+                            ),
                           ),
                         ),
                       ),
@@ -433,28 +438,85 @@ class _CrossCalendarAlertState extends State<CrossCalendarAlert> {
     );
   }
 
-  // ===== セル描画ユーティリティ =====
-
-  Widget _headerCell({required double width, required String md}) {
-    final String label = _mdToSlash(md);
-    final bool isLeap = md == '02-29';
-    return Container(
-      width: width,
-      height: widget.headerHeight,
-      color: isLeap ? const Color(0xFFFAFAFA) : const Color(0xFFF5F5F7),
-      alignment: Alignment.centerLeft,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+  ///
+  Widget getMonthSelectButton() {
+    return SizedBox(
+      height: 64,
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: ListView.separated(
+              controller: _monthBarCtrl,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              scrollDirection: Axis.horizontal,
+              itemCount: 12,
+              cacheExtent: 200,
+              addAutomaticKeepAlives: false,
+              addSemanticIndexes: false,
+              itemBuilder: (BuildContext context, int i) {
+                final int month = i + 1;
+                final bool selected = month == _currentMonth;
+                return Container(
+                  key: _monthKeys[i],
+                  child: GestureDetector(
+                    onTap: () => _scrollToMonth(month),
+                    child: CircleAvatar(
+                      radius: 22,
+                      backgroundColor: selected ? Colors.blue : Colors.grey.shade300,
+                      foregroundColor: selected ? Colors.white : Colors.black87,
+                      child: Text('$month月'),
+                    ),
+                  ),
+                );
+              },
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+            ),
+          ),
+          const SizedBox(width: 8),
+          OutlinedButton.icon(
+            onPressed: () => _scrollToTodayDay(),
+            icon: const Icon(Icons.today, size: 18),
+            label: const Text('今日'),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
     );
   }
 
-  Widget _buildColumnOfYear({required String md, required double colWidth}) {
+  ///
+  Widget getHeaderCellContent({required double width, required String md}) {
+    return SizedBox(
+      width: width,
+      height: widget.headerHeight,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.2),
+          border: Border(right: BorderSide(color: Colors.white.withValues(alpha: 0.2))),
+        ),
+        child: Center(child: Text(md, style: _text12Bold)),
+      ),
+    );
+  }
+
+  ///
+  Widget _buildColumnOfYear({required String md, required double colWidth, required double lifetimeTileW}) {
     final DateTime today = DateTime.now();
     final String todayMd = '${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
     final String todayYear = today.year.toString();
 
+    double sum = 0;
+    for (int r = 0; r < widget.years.length; r++) {
+      sum += widget.rowHeights[r + 1];
+    }
+    if ((sum - _bodyTotalHeight).abs() > 0.5) {
+      debugPrint('[CrossCalendar] ⚠ sumRows=$sum  bodyTotal=$_bodyTotalHeight  (md:$md)');
+    }
+
     return SizedBox(
       width: colWidth,
+      height: _bodyTotalHeight,
+
       child: Column(
         children: <Widget>[
           for (int r = 0; r < widget.years.length; r++)
@@ -464,19 +526,82 @@ class _CrossCalendarAlertState extends State<CrossCalendarAlert> {
               isDisabled: _isNonLeapFeb29(widget.years[r], md),
               isCurrentYear: widget.years[r] == todayYear,
               isToday: widget.years[r] == todayYear && md == todayMd,
-              child: _isNonLeapFeb29(widget.years[r], md) ? const SizedBox.shrink() : _cellContent(widget.years[r], md),
+              child: _isNonLeapFeb29(widget.years[r], md)
+                  ? const SizedBox.shrink()
+                  : getOneCellContent(widget.years[r], md, lifetimeTileW: lifetimeTileW),
             ),
         ],
       ),
     );
   }
 
-  Widget _cellContent(String year, String md) {
-    final String? v = widget.data[year]?[md];
-    final String fallback = _ymdJP(year, md);
-    return Text(v ?? fallback, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13));
+  ///
+  Widget getOneCellContent(String year, String md, {required double lifetimeTileW}) {
+    final String date = '$year-$md';
+
+    final String youbi = _weekdayOf(year, md);
+
+    final bool isHoliday = _isHoliday(date, youbi);
+
+    return Column(
+      children: <Widget>[
+        SizedBox(
+          width: double.infinity,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: <Widget>[
+                Text(date, maxLines: 1, overflow: TextOverflow.ellipsis, style: _text12),
+                Text(youbi.substring(0, 3), style: _text12),
+              ],
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 10),
+      ],
+    );
   }
 
+  ///
+  Widget getLifetimeDisplayCellForCrossCalendar({
+    required String date,
+    required List<String> lifetimeData,
+    required double tileW,
+  }) {
+    final List<Widget> rows = <Widget>[];
+    int i = 0;
+
+    while (i < lifetimeData.length) {
+      final int end = (i + 6 <= lifetimeData.length) ? i + 6 : lifetimeData.length;
+      final List<Widget> line = <Widget>[];
+
+      for (int j = i; j < end; j++) {
+        final String value = lifetimeData[j];
+
+        line.add(
+          Padding(
+            padding: const EdgeInsets.all(1),
+
+            child: SizedBox(
+              width: tileW,
+              child: Center(
+                child: Text((j % 6 == 0) ? j.toString().padLeft(2, '0') : '', style: const TextStyle(fontSize: 10)),
+              ),
+            ),
+          ),
+        );
+      }
+
+      rows.add(Row(children: line));
+      i = end;
+    }
+
+    return Column(children: rows);
+  }
+
+  ///
   bool _isNonLeapFeb29(String year, String md) {
     if (md != '02-29') {
       return false;
@@ -486,11 +611,7 @@ class _CrossCalendarAlertState extends State<CrossCalendarAlert> {
     return !isLeap;
   }
 
-  String _mdToSlash(String md) => '${int.parse(md.substring(0, 2))}/${int.parse(md.substring(3, 5))}';
-
-  String _ymdJP(String y, String md) => '$y年${int.parse(md.substring(0, 2))}月${int.parse(md.substring(3, 5))}日';
-
-  /// 共通セル（今年＝薄黄色＋薄オレンジ枠、本日＝濃黄＋濃オレンジ枠）
+  ///
   Widget _bodyCell({
     required double width,
     required double height,
@@ -499,39 +620,75 @@ class _CrossCalendarAlertState extends State<CrossCalendarAlert> {
     bool isCurrentYear = false,
     bool isToday = false,
   }) {
-    // 背景色設定
     Color? bg;
     if (isDisabled) {
-      bg = const Color(0xFFF0F0F0);
+      bg = Colors.black.withValues(alpha: 0.2);
     } else if (isToday) {
-      bg = const Color(0xFFFFF59D); // 濃い黄色（今日）
+      bg = Colors.white.withValues(alpha: 0.2);
     } else if (isCurrentYear) {
-      bg = const Color(0xFFFFFDE7); // 薄い黄色（今年）
+      bg = Colors.white.withValues(alpha: 0.1);
     }
 
-    // 枠線設定
     BorderSide borderColor;
     if (isToday) {
-      borderColor = const BorderSide(color: Color(0xFFFFB300), width: 2.0); // 濃いオレンジ
+      borderColor = BorderSide(color: Colors.orangeAccent.withValues(alpha: 0.3), width: 5);
     } else if (isCurrentYear) {
-      borderColor = const BorderSide(color: Color(0xFFFFCC80), width: 1.5); // 薄いオレンジ
+      borderColor = BorderSide(color: Colors.orangeAccent.withValues(alpha: 0.2), width: 1.5);
     } else {
-      borderColor = const BorderSide(color: Color(0xFFE0E0E0)); // 通常枠線
+      borderColor = BorderSide(color: Colors.white.withValues(alpha: 0.2));
     }
 
-    return Stack(
-      children: <Widget>[
-        Container(width: width, height: height, color: bg),
-        if (isDisabled) CustomPaint(size: Size(width, height), painter: DiagonalSlashPainter()),
-        Container(
-          width: width,
-          height: height,
-          decoration: BoxDecoration(
-            border: Border(bottom: borderColor, right: borderColor),
-          ),
+    return SizedBox(
+      width: width,
+      height: height,
+      child: ClipRect(
+        child: Stack(
+          children: <Widget>[
+            if (bg != null) const Positioned.fill(child: ColoredBox(color: Colors.transparent)),
+            if (bg != null) Positioned.fill(child: ColoredBox(color: bg)),
+
+            if (isDisabled) CustomPaint(size: Size(width, height), painter: DiagonalSlashPainter()),
+
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border(
+                    bottom: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
+                    right: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
+                  ),
+                ),
+              ),
+            ),
+
+            Positioned.fill(
+              child: Padding(
+                padding: _cellPadding,
+                child: LayoutBuilder(
+                  builder: (BuildContext context, BoxConstraints constraints) {
+                    return SingleChildScrollView(
+                      physics: const NeverScrollableScrollPhysics(),
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: constraints.maxWidth, maxHeight: constraints.maxHeight),
+                        child: child,
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    border: Border(bottom: borderColor, right: borderColor),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
-        Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: child),
-      ],
+      ),
     );
   }
 }
