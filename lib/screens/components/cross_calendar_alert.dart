@@ -51,10 +51,6 @@ class _CrossCalendarState extends ConsumerState<CrossCalendar> {
 
   final Map<String, String> _weekdayCache = <String, String>{};
 
-  final Map<String, Color> _lifetimeColorCache = <String, Color>{};
-
-  final Map<String, bool> _holidayCache = <String, bool>{};
-
   static const TextStyle _text12 = TextStyle(fontSize: 12);
   static const TextStyle _text12Bold = TextStyle(fontSize: 12, fontWeight: FontWeight.bold);
   static const EdgeInsets _cellPadding = EdgeInsets.symmetric(horizontal: 8, vertical: 6);
@@ -281,18 +277,6 @@ class _CrossCalendarState extends ConsumerState<CrossCalendar> {
 
     _weekdayCache[key] = val;
     return val;
-  }
-
-  ///
-  bool _isHoliday(String date, String youbi) {
-    final bool? c = _holidayCache[date];
-    if (c != null) {
-      return c;
-    }
-
-    final bool v = youbi == 'Saturday' || youbi == 'Sunday';
-    _holidayCache[date] = v;
-    return v;
   }
 
   ///
@@ -541,8 +525,6 @@ class _CrossCalendarState extends ConsumerState<CrossCalendar> {
 
     final String youbi = _weekdayOf(year, md);
 
-    final bool isHoliday = _isHoliday(date, youbi);
-
     return Column(
       children: <Widget>[
         SizedBox(
@@ -578,8 +560,6 @@ class _CrossCalendarState extends ConsumerState<CrossCalendar> {
       final List<Widget> line = <Widget>[];
 
       for (int j = i; j < end; j++) {
-        final String value = lifetimeData[j];
-
         line.add(
           Padding(
             padding: const EdgeInsets.all(1),
