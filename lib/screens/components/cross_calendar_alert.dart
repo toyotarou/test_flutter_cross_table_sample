@@ -51,6 +51,11 @@ class _CrossCalendarState extends ConsumerState<CrossCalendar> {
 
   final Map<String, String> _weekdayCache = <String, String>{};
 
+  int _baseYearForSundayNav = 0;
+  late final List<double> _rowPrefixHeights;
+  bool _sundayNavLocked = false;
+  int? _manualYearForSundayNav;
+
   static const TextStyle _text12 = TextStyle(fontSize: 12);
   static const TextStyle _text12Bold = TextStyle(fontSize: 12, fontWeight: FontWeight.bold);
   static const EdgeInsets _cellPadding = EdgeInsets.symmetric(horizontal: 8, vertical: 6);
@@ -85,6 +90,12 @@ class _CrossCalendarState extends ConsumerState<CrossCalendar> {
       _prefixWidths[i] = _prefixWidths[i - 1] + widget.colWidths[i];
     }
 
+    _rowPrefixHeights = List<double>.filled(widget.years.length + 1, 0);
+    for (int i = 1; i <= widget.years.length; i++) {
+      _rowPrefixHeights[i] = _rowPrefixHeights[i - 1] + widget.rowHeights[i];
+    }
+    _baseYearForSundayNav = _closestYearTo(now.year);
+
     _hHeaderCtrl.addListener(() {
       if (_syncingH) {
         return;
@@ -117,6 +128,9 @@ class _CrossCalendarState extends ConsumerState<CrossCalendar> {
         _vBodyCtrl.jumpTo(_vLeftCtrl.offset);
       }
       _syncingV = false;
+      if (!_sundayNavLocked) {
+        _updateBaseYearByOffset(_vLeftCtrl.offset);
+      }
     });
     _vBodyCtrl.addListener(() {
       if (_syncingV) {
@@ -127,6 +141,9 @@ class _CrossCalendarState extends ConsumerState<CrossCalendar> {
         _vLeftCtrl.jumpTo(_vBodyCtrl.offset);
       }
       _syncingV = false;
+      if (!_sundayNavLocked) {
+        _updateBaseYearByOffset(_vBodyCtrl.offset);
+      }
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -280,6 +297,110 @@ class _CrossCalendarState extends ConsumerState<CrossCalendar> {
   }
 
   ///
+  void _updateBaseYearByOffset(double dy) {
+    int lo = 0, hi = widget.years.length;
+    while (lo < hi) {
+      final int mid = (lo + hi) >> 1;
+      if (_rowPrefixHeights[mid] <= dy) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    final int idx = (lo - 1).clamp(0, widget.years.length - 1);
+    _baseYearForSundayNav = int.parse(widget.years[idx]);
+  }
+
+  ///
+  int _effectiveSundayYear() {
+    if (_sundayNavLocked && _manualYearForSundayNav != null) {
+      return _manualYearForSundayNav!;
+    }
+    return _baseYearForSundayNav == 0 ? _closestYearTo(DateTime.now().year) : _baseYearForSundayNav;
+  }
+
+  ///
+  int _currentColIndex() {
+    final double dx = _hBodyCtrl.hasClients ? _hBodyCtrl.offset : 0.0;
+    int lo = 0, hi = widget.monthDays.length;
+    while (lo < hi) {
+      final int mid = (lo + hi) >> 1;
+      if (_prefixWidths[mid] <= dx) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    return (lo - 1).clamp(0, widget.monthDays.length - 1);
+  }
+
+  ///
+  Future<void> _scrollToSunday({required bool next}) async {
+    final int y = _effectiveSundayYear();
+
+    _ensureYearVisible(y, alignment: 0.0);
+
+    int i = _currentColIndex() + (next ? 1 : -1);
+    while (i >= 0 && i < widget.monthDays.length) {
+      final String md = widget.monthDays[i];
+      final int mm = int.parse(md.substring(0, 2));
+      final int dd = int.parse(md.substring(3, 5));
+
+      final DateTime dt = DateTime(y, mm).add(Duration(days: dd - 1));
+      if (dt.month == mm && dt.day == dd) {
+        if (dt.weekday == DateTime.sunday) {
+          _syncingH = true;
+          // ignore: strict_raw_type, always_specify_types
+          await Future.wait(<Future>[
+            _hHeaderCtrl.scrollToIndex(
+              i,
+              preferPosition: AutoScrollPosition.begin,
+              duration: const Duration(milliseconds: 260),
+            ),
+            _hBodyCtrl.scrollToIndex(
+              i,
+              preferPosition: AutoScrollPosition.begin,
+              duration: const Duration(milliseconds: 260),
+            ),
+          ]);
+          _syncingH = false;
+          return;
+        }
+      }
+      i += (next ? 1 : -1);
+    }
+  }
+
+  ///
+  Future<int?> _pickYear(BuildContext context) async {
+    return showDialog<int>(
+      context: context,
+      builder: (BuildContext ctx) {
+        return SimpleDialog(
+          title: const Text('基準年を選択'),
+          children: <Widget>[
+            SizedBox(
+              width: 320,
+              height: 380,
+              child: ListView.builder(
+                itemCount: widget.years.length,
+                itemBuilder: (_, int i) {
+                  final int y = int.parse(widget.years[i]);
+                  final bool sel = y == _effectiveSundayYear();
+                  return ListTile(
+                    title: Text(widget.years[i]),
+                    trailing: sel ? const Icon(Icons.check) : null,
+                    onTap: () => Navigator.of(ctx).pop(y),
+                  );
+                },
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   void dispose() {
     _hHeaderCtrl.dispose();
@@ -300,7 +421,8 @@ class _CrossCalendarState extends ConsumerState<CrossCalendar> {
 
     return Column(
       children: <Widget>[
-        getMonthSelectButton(),
+        _headerControls(effectiveYear: _effectiveSundayYear()),
+
         const Divider(height: 1),
 
         Expanded(
@@ -423,48 +545,98 @@ class _CrossCalendarState extends ConsumerState<CrossCalendar> {
   }
 
   ///
-  Widget getMonthSelectButton() {
-    return SizedBox(
-      height: 64,
-      child: Row(
-        children: <Widget>[
-          Expanded(
-            child: ListView.separated(
-              controller: _monthBarCtrl,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              scrollDirection: Axis.horizontal,
-              itemCount: 12,
-              cacheExtent: 200,
-              addAutomaticKeepAlives: false,
-              addSemanticIndexes: false,
-              itemBuilder: (BuildContext context, int i) {
-                final int month = i + 1;
-                final bool selected = month == _currentMonth;
-                return Container(
-                  key: _monthKeys[i],
-                  child: GestureDetector(
-                    onTap: () => _scrollToMonth(month),
-                    child: CircleAvatar(
-                      radius: 22,
-                      backgroundColor: selected ? Colors.blue : Colors.grey.shade300,
-                      foregroundColor: selected ? Colors.white : Colors.black87,
-                      child: Text('$month月'),
-                    ),
+  Widget _headerControls({required int effectiveYear}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        SizedBox(
+          height: 64,
+          child: ListView.separated(
+            controller: _monthBarCtrl,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            scrollDirection: Axis.horizontal,
+            itemCount: 12,
+            cacheExtent: 200,
+            addAutomaticKeepAlives: false,
+            addSemanticIndexes: false,
+            itemBuilder: (BuildContext context, int i) {
+              final int month = i + 1;
+              final bool selected = month == _currentMonth;
+              return Container(
+                key: _monthKeys[i],
+                child: GestureDetector(
+                  onTap: () => _scrollToMonth(month),
+                  child: CircleAvatar(
+                    radius: 22,
+                    backgroundColor: selected ? Colors.blue : Colors.grey.shade300,
+                    foregroundColor: selected ? Colors.white : Colors.black87,
+                    child: Text('$month月'),
                   ),
-                );
-              },
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
-            ),
+                ),
+              );
+            },
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
           ),
-          const SizedBox(width: 8),
-          OutlinedButton.icon(
-            onPressed: () => _scrollToTodayDay(),
-            icon: const Icon(Icons.today, size: 18),
-            label: const Text('今日'),
+        ),
+
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: <Widget>[
+              FilterChip(
+                label: Text(_sundayNavLocked ? '基準年ロック: ON' : '基準年ロック: OFF'),
+                selected: _sundayNavLocked,
+                onSelected: (bool on) {
+                  setState(() {
+                    _sundayNavLocked = on;
+                    if (_sundayNavLocked) {
+                      _manualYearForSundayNav = effectiveYear;
+                    } else {
+                      _manualYearForSundayNav = null;
+                    }
+                  });
+                },
+                avatar: Icon(_sundayNavLocked ? Icons.lock : Icons.lock_open, size: 18),
+              ),
+
+              ActionChip(
+                label: Text('基準年: $effectiveYear'),
+                avatar: const Icon(Icons.calendar_today, size: 16),
+                onPressed: _sundayNavLocked
+                    ? () async {
+                        final int? y = await _pickYear(context);
+                        if (y != null) {
+                          setState(() => _manualYearForSundayNav = y);
+                          _ensureYearVisible(y, alignment: 0.0);
+                        }
+                      }
+                    : null,
+              ),
+
+              OutlinedButton.icon(
+                onPressed: () => _scrollToSunday(next: false),
+                icon: const Icon(Icons.chevron_left),
+                label: const Text('前の日曜'),
+              ),
+
+              OutlinedButton.icon(
+                onPressed: () => _scrollToSunday(next: true),
+                icon: const Icon(Icons.chevron_right),
+                label: const Text('次の日曜'),
+              ),
+
+              OutlinedButton.icon(
+                onPressed: () => _scrollToTodayDay(),
+                icon: const Icon(Icons.today, size: 18),
+                label: const Text('今日'),
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
